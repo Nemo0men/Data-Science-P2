@@ -1,0 +1,140 @@
+# Load Packages
+
+# Data manipulation
+import pandas as pd
+import numpy as np
+
+# Visualization
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Statistical modeling
+import statsmodels.api as sm
+
+# Set plotting style
+sns.set(style="whitegrid")
+
+# Load Dataset
+
+pbp = pd.read_csv("pbp_clean.csv")
+
+# quick look
+pbp.head()
+
+pbp.shape
+
+# Dataset Cleaning
+
+# Basic cleaning checks
+pbp = pbp.dropna(subset=["season", "week", "game_id"])
+
+# Ensure correct data types
+pbp["season"] = pbp["season"].astype(int)
+pbp["week"] = pbp["week"].astype(int)
+
+pbp.head()
+
+# Scoring outcome variable 
+
+# final scores/game
+game_scores = (
+    pbp.groupby(["season", "week", "game_id"])
+    .agg({
+        "home_score": "max",
+        "away_score": "max"
+    })
+    .reset_index()
+)
+
+game_scores["total_points"] = (
+    game_scores["home_score"] + game_scores["away_score"]
+)
+
+# weekly average points/game
+weekly_scoring = (
+    game_scores.groupby(["season", "week"])["total_points"]
+    .mean()
+    .reset_index(name="avg_points")
+)
+
+# pass rate outcome variable 
+
+pass_rate = (
+    pbp[pbp["play_type"].isin(["pass", "run"])]
+    .groupby(["season", "week"])
+    .apply(lambda x: (x["play_type"] == "pass").mean())
+    .reset_index(name="pass_rate")
+)
+
+# plays/game outcome variable 
+
+plays_per_game = (
+    pbp.groupby(["season", "week", "game_id"])
+    .size()
+    .reset_index(name="num_plays")
+    .groupby(["season", "week"])["num_plays"]
+    .mean()
+    .reset_index(name="avg_plays")
+)
+
+# merge all variable 
+
+merged = weekly_scoring.merge(pass_rate, on=["season", "week"]) \
+                        .merge(plays_per_game, on=["season", "week"])
+
+merged = merged.sort_values(["season", "week"])
+merged["time_index"] = range(len(merged))
+
+merged.head()
+
+# EDA
+
+# scoring over time - plot
+
+plt.figure(figsize=(12,6))
+plt.plot(merged["avg_points"])
+plt.title("Weekly Average Points Per Game (2010–2024)")
+plt.xlabel("Time")
+plt.ylabel("Average Points")
+plt.show()
+
+# pass rate - plot
+
+plt.figure(figsize=(12,6))
+plt.plot(merged["pass_rate"])
+plt.title("Weekly Pass Rate (2010–2024)")
+plt.ylabel("Pass Rate")
+plt.show()
+
+# plays per game - plot
+
+plt.figure(figsize=(12,6))
+plt.plot(merged["avg_plays"])
+plt.title("Weekly Plays Per Game (2010–2024)")
+plt.ylabel("Average Plays")
+plt.show()
+
+# correlation matrix 
+
+merged[["avg_points", "pass_rate", "avg_plays"]].corr()
+
+# heatmap 
+
+sns.heatmap(
+    merged[["avg_points", "pass_rate", "avg_plays"]].corr(),
+    annot=True,
+    cmap="coolwarm"
+)
+plt.title("Correlation Matrix")
+plt.show()
+
+# linear regression 
+
+X = merged[["pass_rate", "avg_plays", "time_index"]]
+X = sm.add_constant(X)
+y = merged["avg_points"]
+
+model = sm.OLS(y, X).fit()
+print(model.summary())
+
+merged.to_csv("nfl_weekly_dataset.csv", index=False)
